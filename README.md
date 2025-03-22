@@ -57,15 +57,25 @@ For macOS, this project uses launchd to run as a background service:
 1. Run the deployment script:
 
 ```bash
-python scripts/deploy.py
+./deploy.sh
 ```
 
 This will:
 - Create plist files from the templates
 - Install them to the correct location
 - Start the service
+- Set up Cloudflare tunnel (optional)
 
 The plist templates are in the repository, but the generated plist files are git-ignored.
+
+### Managing the Service
+
+Check status and restart when needed:
+
+```bash
+./status.sh                # Check service status and recent activity
+./status.sh --restart      # Restart services and show status
+```
 
 ### Notion Database Setup
 
