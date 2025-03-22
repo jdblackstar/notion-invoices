@@ -1,0 +1,23 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Secrets
+.env
+
+# Logs
+logs/
+
+# Ruff
+.ruff_cache/
+
+# macOS stuff
+.DS_Store
+*.plist
