@@ -20,4 +20,7 @@ logs/
 
 # macOS stuff
 .DS_Store
+
+# Plist files (except templates)
 *.plist
+!*.plist.template
