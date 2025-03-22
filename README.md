@@ -1,14 +1,13 @@
 # Notion-Stripe Invoice Sync
 
-A service that provides two-way synchronization between Stripe invoices and a Notion database.
+A service that syncs invoices between Stripe and Notion.
 
 ## Features
 
-- Real-time sync of invoice data from Stripe to Notion via webhooks
-- Ability to edit billing period in Notion and sync it back to Stripe as part of the memo
-- Configurable field mapping between systems
-- Error handling and retry mechanisms for failed API calls
-- Logging of all sync activities
+- Real-time sync from Stripe to Notion using webhooks
+- Edit billing period in Notion and sync it to Stripe
+- Background sync to catch any missed updates
+- Detailed logging of all activities
 
 ## Setup
 
@@ -16,61 +15,87 @@ A service that provides two-way synchronization between Stripe invoices and a No
 
 - Python 3.13 or higher
 - Stripe account with API access
-- Notion account with a properly formatted invoice database
-- Notion API key with access to your databases
+- Notion account with an invoice database
+- Notion API key
 
 ### Installation
 
 1. Clone this repository:
 
 ```bash
-git clone https://github.com/yourusername/notion-invoices.git
+git clone https://github.com/jdblackstar/notion-invoices.git
 cd notion-invoices
 ```
 
 2. Create a virtual environment and install dependencies:
 
-```bash
-python -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-pip install -e .
-```
+   Option A: Using traditional tools
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+   pip install -e .
+   ```
 
-3. Copy the example environment file and fill in your credentials:
+   Option B: Using uv (faster)
+   ```bash
+   uv venv .venv
+   source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+   uv pip install -e .
+   ```
+
+3. Copy the example environment file and add your credentials:
 
 ```bash
 cp .env.example .env
 # Edit .env with your Stripe and Notion API keys
 ```
 
+### Deploy as a Service
+
+For macOS, this project uses launchd to run as a background service:
+
+1. Run the deployment script:
+
+```bash
+python scripts/deploy.py
+```
+
+This will:
+- Create plist files from the templates
+- Install them to the correct location
+- Start the service
+
+The plist templates are in the repository, but the generated plist files are git-ignored.
+
 ### Notion Database Setup
 
-Your Notion Invoice database should have the following properties:
+Your Notion Invoice database should have these properties:
 
-- **Stripe ID** (Text): Stores the Stripe invoice ID
-- **Invoice Number** (Text): Stores the invoice number
-- **Status** (Select): Options should include Draft, Open, Paid, Uncollectible, Void
-- **Amount** (Number): Stores the invoice amount (will be displayed as dollars/currency)
-- **Customer ID** (Text): Stores the Stripe customer ID
-- **Finalized Date** (Date): Date when the invoice was finalized
-- **Due Date** (Date): Date when payment is due
-- **Memo** (Text): Invoice memo or description
-- **Billing Period** (Text): Billing period for the invoice (Notion-only field)
+- **Stripe ID** (Text): The Stripe invoice ID
+- **Invoice Number** (Text): Invoice number
+- **Status** (Select): Options for Draft, Open, Paid, Uncollectible, Void
+- **Amount** (Number): Invoice amount
+- **Customer ID** (Text): Stripe customer ID
+- **Finalized Date** (Date): When the invoice was finalized
+- **Due Date** (Date): When payment is due
+- **Memo** (Text): Invoice description
+- **Billing Period** (Text): Billing period (Notion-only field)
 
 ### Stripe Webhook Setup
 
-1. Go to the Stripe Dashboard > Developers > Webhooks
-2. Add a new endpoint with URL: `https://your-domain.com/api/webhooks/stripe`
-3. Select the following events to listen for:
+1. Go to Stripe Dashboard > Developers > Webhooks
+2. Add endpoint: `https://your-domain.com/api/webhooks/stripe`
+3. Listen for these events:
    - `invoice.created`
    - `invoice.updated`
    - `invoice.finalized`
    - `invoice.paid`
    - `invoice.payment_failed`
    - `invoice.payment_succeeded`
+   - `invoice.deleted`
 4. Copy the webhook signing secret to your `.env` file
 
-## Running the Service
+## Running the Service Manually
 
 Start the service with:
 
@@ -84,7 +109,7 @@ The API will be available at http://localhost:8000.
 
 ### Testing Webhooks Locally
 
-You can use the Stripe CLI to test webhooks locally:
+Use the Stripe CLI to test webhooks:
 
 ```bash
 stripe listen --forward-to http://localhost:8000/api/webhooks/stripe
