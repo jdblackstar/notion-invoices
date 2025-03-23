@@ -8,6 +8,7 @@ A service that syncs invoices between Stripe and Notion.
 - Edit billing period in Notion and sync it to Stripe
 - Background sync to catch any missed updates
 - Detailed logging of all activities
+- Structured logging with Logfire for better observability
 
 ## Setup
 
@@ -17,6 +18,7 @@ A service that syncs invoices between Stripe and Notion.
 - Stripe account with API access
 - Notion account with an invoice database
 - Notion API key
+- Logfire account for observability (optional)
 
 ### Installation
 
@@ -49,6 +51,22 @@ cd notion-invoices
 cp .env.example .env
 # Edit .env with your Stripe and Notion API keys
 ```
+
+### Logfire Configuration
+
+For structured logging and observability, this project uses Logfire:
+
+1. Sign up for a [Logfire](https://logfire.ai/) account if you don't have one
+2. Get your API key from the Logfire dashboard
+3. Add these variables to your `.env` file:
+
+```bash
+ENVIRONMENT=development # or production
+LOGFIRE_API_KEY=your_logfire_api_key
+LOGFIRE_SERVICE_NAME=notion-stripe-sync # or custom name
+```
+
+When `ENVIRONMENT` is set to `production`, a valid Logfire API key is required. In development mode, logs will be sent to stdout even without an API key.
 
 ### Deploy as a Service
 

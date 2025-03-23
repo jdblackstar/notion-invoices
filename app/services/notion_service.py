@@ -1,18 +1,18 @@
 """Service for interacting with the Notion API."""
 
-import logging
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
+import logfire
 from notion_client import APIResponseError, Client
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from app.config import Config
 from app.models.invoice import Invoice, InvoiceStatus, NotionInvoice
 
-# Configure logging
-logger = logging.getLogger(__name__)
+# Configure logger
+logger = logfire.getLogger(__name__)
 
 
 def _format_notion_id(notion_id: str) -> str:
@@ -87,7 +87,7 @@ class NotionService:
         try:
             return func(*args, **kwargs)
         except APIResponseError as e:
-            logger.error(f"Error calling Notion API: {e}")
+            logger.error("Error calling Notion API", error=str(e))
             raise
 
     def query_invoice_by_stripe_id(self, stripe_id: str) -> Optional[NotionInvoice]:
@@ -100,41 +100,48 @@ class NotionService:
         Returns:
             Optional[NotionInvoice]: Notion invoice if found, None otherwise
         """
-        try:
-            # Since we don't have a direct Stripe ID field, we have to search all records
-            # and then filter by URL if it contains the ID
-            response = self._make_api_request(
-                self.client.databases.query,
-                database_id=self.invoice_db_id,
-                page_size=100,
-            )
+        with logfire.span("query_invoice_by_stripe_id", stripe_id=stripe_id):
+            try:
+                # Since we don't have a direct Stripe ID field, we have to search all records
+                # and then filter by URL if it contains the ID
+                response = self._make_api_request(
+                    self.client.databases.query,
+                    database_id=self.invoice_db_id,
+                    page_size=100,
+                )
 
-            results = response.get("results", [])
-            if not results:
+                results = response.get("results", [])
+                if not results:
+                    return None
+
+                # Find pages where the Stripe link contains the stripe_id
+                matching_pages = []
+                for page in results:
+                    props = page.get("properties", {})
+                    stripe_link = self._extract_url_property(
+                        props.get("Stripe link", {})
+                    )
+
+                    # Extract the Stripe ID from the URL
+                    url_stripe_id = _extract_stripe_id_from_url(stripe_link)
+
+                    # If the ID matches, consider it a match
+                    if url_stripe_id and url_stripe_id == stripe_id:
+                        matching_pages.append(page)
+
+                if not matching_pages:
+                    return None
+
+                # Get the first matching result
+                page = matching_pages[0]
+                return self._page_to_notion_invoice(page)
+            except Exception as e:
+                logger.error(
+                    "Error querying invoice with Stripe ID",
+                    stripe_id=stripe_id,
+                    error=str(e),
+                )
                 return None
-
-            # Find pages where the Stripe link contains the stripe_id
-            matching_pages = []
-            for page in results:
-                props = page.get("properties", {})
-                stripe_link = self._extract_url_property(props.get("Stripe link", {}))
-
-                # Extract the Stripe ID from the URL
-                url_stripe_id = _extract_stripe_id_from_url(stripe_link)
-
-                # If the ID matches, consider it a match
-                if url_stripe_id and url_stripe_id == stripe_id:
-                    matching_pages.append(page)
-
-            if not matching_pages:
-                return None
-
-            # Get the first matching result
-            page = matching_pages[0]
-            return self._page_to_notion_invoice(page)
-        except Exception as e:
-            logger.error(f"Error querying invoice with Stripe ID {stripe_id}: {e}")
-            return None
 
     def query_invoice_by_notion_id(self, notion_id: str) -> Optional[NotionInvoice]:
         """
@@ -146,24 +153,37 @@ class NotionService:
         Returns:
             Optional[NotionInvoice]: Matching invoice if found, None otherwise
         """
-        try:
-            # Format the ID if needed
-            notion_id = _format_notion_id(notion_id)
+        with logfire.span("query_invoice_by_notion_id", notion_id=notion_id):
+            try:
+                # Format the ID if needed
+                notion_id = _format_notion_id(notion_id)
 
-            # Get the page from Notion
-            page = self._make_api_request(self.client.pages.retrieve, page_id=notion_id)
+                # Get the page from Notion
+                page = self._make_api_request(
+                    self.client.pages.retrieve, page_id=notion_id
+                )
 
-            # Convert to NotionInvoice model
-            return self._page_to_notion_invoice(page)
-        except APIResponseError as e:
-            if e.code == "object_not_found":
-                logger.warning(f"Invoice with Notion ID {notion_id} not found")
+                # Convert to NotionInvoice model
+                return self._page_to_notion_invoice(page)
+            except APIResponseError as e:
+                if e.code == "object_not_found":
+                    logger.warning(
+                        "Invoice with Notion ID not found", notion_id=notion_id
+                    )
+                    return None
+                logger.error(
+                    "Error querying invoice with Notion ID",
+                    notion_id=notion_id,
+                    error=str(e),
+                )
                 return None
-            logger.error(f"Error querying invoice with Notion ID {notion_id}: {e}")
-            return None
-        except Exception as e:
-            logger.error(f"Error querying invoice with Notion ID {notion_id}: {e}")
-            return None
+            except Exception as e:
+                logger.error(
+                    "Error querying invoice with Notion ID",
+                    notion_id=notion_id,
+                    error=str(e),
+                )
+                return None
 
     def _page_to_notion_invoice(self, page: Dict) -> NotionInvoice:
         """
@@ -188,7 +208,9 @@ class NotionService:
 
         # Log the billing period extraction for debugging
         logger.info(
-            f"Extracted billing period from Notion: start={billing_period_start}, end={billing_period_end}"
+            "Extracted billing period from Notion",
+            start=billing_period_start,
+            end=billing_period_end,
         )
 
         return NotionInvoice(
@@ -273,42 +295,34 @@ class NotionService:
         end_date = None
 
         try:
-            logger.info(f"DATE EXTRACT: Extracting date range from property: {prop}")
+            logger.info("Extracting date range from property", property=prop)
 
             if prop.get("type") == "date":
                 date = prop.get("date")
-                logger.info(f"DATE EXTRACT: Date property content: {date}")
+                logger.info("Date property content", date=date)
 
                 if date:
                     if date.get("start"):
                         start_str = date["start"]
-                        logger.info(
-                            f"DATE EXTRACT: Found start date string: {start_str}"
-                        )
+                        logger.info("Found start date string", start_str=start_str)
                         start_date = datetime.fromisoformat(
                             start_str.replace("Z", "+00:00")
                         )
-                        logger.info(f"DATE EXTRACT: Parsed start date: {start_date}")
+                        logger.info("Parsed start date", start_date=start_date)
 
                     if date.get("end"):
                         end_str = date["end"]
-                        logger.info(f"DATE EXTRACT: Found end date string: {end_str}")
+                        logger.info("Found end date string", end_str=end_str)
                         end_date = datetime.fromisoformat(
                             end_str.replace("Z", "+00:00")
                         )
-                        logger.info(f"DATE EXTRACT: Parsed end date: {end_date}")
+                        logger.info("Parsed end date", end_date=end_date)
             else:
-                logger.info(
-                    f"DATE EXTRACT: Property is not a date type: {prop.get('type')}"
-                )
+                logger.info("Property is not a date type", type=prop.get("type"))
 
-            logger.info(
-                f"DATE EXTRACT: Final extracted date range: start={start_date}, end={end_date}"
-            )
+            logger.info("Final extracted date range", start=start_date, end=end_date)
         except Exception as e:
-            logger.error(
-                f"DATE EXTRACT: Error extracting date range: {e}", exc_info=True
-            )
+            logger.error("Error extracting date range", error=str(e), exc_info=True)
 
         return start_date, end_date
 
@@ -337,36 +351,47 @@ class NotionService:
         Returns:
             Optional[str]: Notion page ID if successful, None otherwise
         """
-        try:
-            # Check if invoice already exists by looking up Stripe ID
-            existing_invoice = None
-            if invoice.id:
-                existing_invoice = self.query_invoice_by_stripe_id(invoice.id)
+        with logfire.span("create_or_update_invoice", invoice_id=invoice.id):
+            try:
+                # Check if invoice already exists by looking up Stripe ID
+                existing_invoice = None
+                if invoice.id:
+                    existing_invoice = self.query_invoice_by_stripe_id(invoice.id)
 
-            if existing_invoice:
-                # Update existing invoice
-                page_id = existing_invoice.notion_id
-                self._make_api_request(
-                    self.client.pages.update,
-                    page_id=page_id,
-                    properties=self._invoice_to_notion_properties(invoice),
-                )
-                return page_id
-            else:
-                # Create new invoice using template if configured
-                if Config.NOTION_INVOICE_TEMPLATE_ID:
-                    return self._create_invoice_from_template(invoice)
-                else:
-                    # Create new invoice directly in database
-                    response = self._make_api_request(
-                        self.client.pages.create,
-                        parent={"database_id": self.invoice_db_id},
+                if existing_invoice:
+                    # Update existing invoice
+                    page_id = existing_invoice.notion_id
+                    logger.info(
+                        "Updating existing invoice in Notion",
+                        stripe_id=invoice.id,
+                        notion_id=page_id,
+                    )
+                    self._make_api_request(
+                        self.client.pages.update,
+                        page_id=page_id,
                         properties=self._invoice_to_notion_properties(invoice),
                     )
-                    return response["id"]
-        except Exception as e:
-            logger.error(f"Error creating/updating invoice in Notion: {e}")
-            return None
+                    return page_id
+                else:
+                    # Create new invoice using template if configured
+                    logger.info("Creating new invoice in Notion", stripe_id=invoice.id)
+                    if Config.NOTION_INVOICE_TEMPLATE_ID:
+                        return self._create_invoice_from_template(invoice)
+                    else:
+                        # Create new invoice directly in database
+                        response = self._make_api_request(
+                            self.client.pages.create,
+                            parent={"database_id": self.invoice_db_id},
+                            properties=self._invoice_to_notion_properties(invoice),
+                        )
+                        return response["id"]
+            except Exception as e:
+                logger.error(
+                    "Error creating/updating invoice in Notion",
+                    invoice_id=invoice.id,
+                    error=str(e),
+                )
+                return None
 
     def _create_invoice_from_template(self, invoice: Invoice) -> Optional[str]:
         """
@@ -378,52 +403,65 @@ class NotionService:
         Returns:
             Optional[str]: Notion page ID if successful, None otherwise
         """
-        try:
-            # Format the template ID
-            template_id = _format_notion_id(Config.NOTION_INVOICE_TEMPLATE_ID)
+        with logfire.span("create_invoice_from_template", invoice_id=invoice.id):
+            try:
+                # Format the template ID
+                template_id = _format_notion_id(Config.NOTION_INVOICE_TEMPLATE_ID)
 
-            logger.info(f"Creating invoice {invoice.id} from template {template_id}")
-
-            # Create a new page in the database
-            properties = self._invoice_to_notion_properties(invoice)
-
-            # Create a new page in the database with properties from the invoice
-            new_page = self._make_api_request(
-                self.client.pages.create,
-                parent={"database_id": self.invoice_db_id},
-                properties=properties,
-            )
-
-            new_page_id = new_page["id"]
-            logger.info(f"Created new page with ID: {new_page_id}")
-
-            # Get the template's content blocks
-            template_blocks = self._make_api_request(
-                self.client.blocks.children.list, block_id=template_id
-            ).get("results", [])
-
-            if template_blocks:
                 logger.info(
-                    f"Copying {len(template_blocks)} blocks from template to new page"
+                    "Creating invoice from template",
+                    invoice_id=invoice.id,
+                    template_id=template_id,
                 )
 
-                # Convert the blocks to a format suitable for creating
-                blocks_to_create = self._prepare_blocks_for_copy(template_blocks)
+                # Create a new page in the database
+                properties = self._invoice_to_notion_properties(invoice)
 
-                # Add the template blocks to the new page
-                if blocks_to_create:
-                    self._make_api_request(
-                        self.client.blocks.children.append,
-                        block_id=new_page_id,
-                        children=blocks_to_create,
+                # Create a new page in the database with properties from the invoice
+                new_page = self._make_api_request(
+                    self.client.pages.create,
+                    parent={"database_id": self.invoice_db_id},
+                    properties=properties,
+                )
+
+                new_page_id = new_page["id"]
+                logger.info("Created new page", page_id=new_page_id)
+
+                # Get the template's content blocks
+                template_blocks = self._make_api_request(
+                    self.client.blocks.children.list, block_id=template_id
+                ).get("results", [])
+
+                if template_blocks:
+                    logger.info(
+                        "Copying blocks from template to new page",
+                        block_count=len(template_blocks),
+                        template_id=template_id,
+                        page_id=new_page_id,
                     )
 
-            return new_page_id
-        except Exception as e:
-            logger.error(f"Error creating invoice from template: {e}", exc_info=True)
+                    # Convert the blocks to a format suitable for creating
+                    blocks_to_create = self._prepare_blocks_for_copy(template_blocks)
 
-            # Fallback to regular creation
-            return self._create_invoice_without_template(invoice)
+                    # Add the template blocks to the new page
+                    if blocks_to_create:
+                        self._make_api_request(
+                            self.client.blocks.children.append,
+                            block_id=new_page_id,
+                            children=blocks_to_create,
+                        )
+
+                return new_page_id
+            except Exception as e:
+                logger.error(
+                    "Error creating invoice from template",
+                    invoice_id=invoice.id,
+                    error=str(e),
+                    exc_info=True,
+                )
+
+                # Fallback to regular creation
+                return self._create_invoice_without_template(invoice)
 
     def _prepare_blocks_for_copy(self, blocks: List[Dict]) -> List[Dict]:
         """
@@ -470,6 +508,7 @@ class NotionService:
             Optional[str]: Notion page ID if successful, None otherwise
         """
         try:
+            logger.info("Creating invoice without template", invoice_id=invoice.id)
             # Create new invoice directly in database
             response = self._make_api_request(
                 self.client.pages.create,
@@ -478,7 +517,11 @@ class NotionService:
             )
             return response["id"]
         except Exception as e:
-            logger.error(f"Error creating invoice without template: {e}")
+            logger.error(
+                "Error creating invoice without template",
+                invoice_id=invoice.id,
+                error=str(e),
+            )
             return None
 
     def _invoice_to_notion_properties(self, invoice: Invoice) -> Dict[str, Any]:
@@ -553,13 +596,18 @@ class NotionService:
         Returns:
             Optional[Dict]: Customer data if found, None otherwise
         """
-        try:
-            # This would need to be customized based on your clients database structure
-            # Similar to how we're handling the invoice lookup
-            return None
-        except Exception as e:
-            logger.error(f"Error getting customer with Stripe ID {stripe_id}: {e}")
-            return None
+        with logfire.span("get_customer_by_stripe_id", stripe_id=stripe_id):
+            try:
+                # This would need to be customized based on your clients database structure
+                # Similar to how we're handling the invoice lookup
+                return None
+            except Exception as e:
+                logger.error(
+                    "Error getting customer with Stripe ID",
+                    stripe_id=stripe_id,
+                    error=str(e),
+                )
+                return None
 
     def delete_invoice_by_stripe_id(self, stripe_id: str) -> bool:
         """
@@ -571,46 +619,53 @@ class NotionService:
         Returns:
             bool: True if successful, False otherwise
         """
-        try:
-            logger.info(
-                f"Attempting to delete invoice with Stripe ID {stripe_id} from Notion"
-            )
+        with logfire.span("delete_invoice_by_stripe_id", stripe_id=stripe_id):
+            try:
+                logger.info(
+                    "Attempting to delete invoice from Notion", stripe_id=stripe_id
+                )
 
-            # Query for the invoice
-            existing_invoice = self.query_invoice_by_stripe_id(stripe_id)
+                # Query for the invoice
+                existing_invoice = self.query_invoice_by_stripe_id(stripe_id)
 
-            if not existing_invoice:
-                logger.warning(
-                    f"Invoice with Stripe ID {stripe_id} not found in Notion - nothing to delete"
+                if not existing_invoice:
+                    logger.warning(
+                        "Invoice not found in Notion - nothing to delete",
+                        stripe_id=stripe_id,
+                    )
+                    return False
+
+                logger.info(
+                    "Found invoice to delete",
+                    notion_id=existing_invoice.notion_id,
+                    invoice_number=existing_invoice.invoice_number,
+                )
+
+                # Archive the page in Notion (soft delete)
+                response = self._make_api_request(
+                    self.client.pages.update,
+                    page_id=existing_invoice.notion_id,
+                    archived=True,
+                )
+
+                # Log the response status
+                logger.info(
+                    "Notion API response for deletion",
+                    archived=response.get("archived", False),
+                )
+
+                logger.info(
+                    "Successfully deleted invoice from Notion", stripe_id=stripe_id
+                )
+                return True
+            except Exception as e:
+                logger.error(
+                    "Error deleting invoice from Notion",
+                    stripe_id=stripe_id,
+                    error=str(e),
+                    exc_info=True,
                 )
                 return False
-
-            logger.info(
-                f"Found invoice to delete: notion_id={existing_invoice.notion_id}, invoice_number={existing_invoice.invoice_number}"
-            )
-
-            # Archive the page in Notion (soft delete)
-            response = self._make_api_request(
-                self.client.pages.update,
-                page_id=existing_invoice.notion_id,
-                archived=True,
-            )
-
-            # Log the response status
-            logger.info(
-                f"Notion API response for deletion: archived={response.get('archived', False)}"
-            )
-
-            logger.info(
-                f"Successfully deleted invoice with Stripe ID {stripe_id} from Notion"
-            )
-            return True
-        except Exception as e:
-            logger.error(
-                f"Error deleting invoice with Stripe ID {stripe_id} from Notion: {e}",
-                exc_info=True,
-            )
-            return False
 
     def get_recently_updated_invoices(self, hours_back: int = 1) -> List[NotionInvoice]:
         """
@@ -622,87 +677,99 @@ class NotionService:
         Returns:
             List[NotionInvoice]: List of recently updated invoices
         """
-        try:
-            logger.info(
-                f"NOTION QUERY: Querying for invoices updated in the last {hours_back} hours"
-            )
+        with logfire.span("get_recently_updated_invoices", hours_back=hours_back):
+            try:
+                logger.info(
+                    "Querying for recently updated invoices", hours_back=hours_back
+                )
 
-            # Get all invoices from the database
-            response = self._make_api_request(
-                self.client.databases.query,
-                database_id=self.invoice_db_id,
-                page_size=100,
-            )
+                # Get all invoices from the database
+                response = self._make_api_request(
+                    self.client.databases.query,
+                    database_id=self.invoice_db_id,
+                    page_size=100,
+                )
 
-            results = response.get("results", [])
-            if not results:
-                logger.info("NOTION QUERY: No invoices found in Notion database")
-                return []
+                results = response.get("results", [])
+                if not results:
+                    logger.info("No invoices found in Notion database")
+                    return []
 
-            # Calculate the cutoff time with timezone awareness for proper comparison
-            cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours_back)
-            logger.info(f"NOTION QUERY: Using cutoff time: {cutoff_time}")
+                # Calculate the cutoff time with timezone awareness for proper comparison
+                cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours_back)
+                logger.info("Using cutoff time", cutoff_time=cutoff_time)
 
-            # Filter pages by last edit time
-            recent_pages = []
-            for page in results:
-                try:
-                    last_edited_time = datetime.fromisoformat(
-                        page.get("last_edited_time", "").replace("Z", "+00:00")
-                    )
-                    logger.info(
-                        f"NOTION QUERY: Page {page.get('id', 'unknown')} last edited at {last_edited_time}"
-                    )
-
-                    # Now both datetimes are timezone-aware, so comparison will work
-                    if last_edited_time > cutoff_time:
-                        recent_pages.append(page)
-                        logger.info(
-                            f"NOTION QUERY: Added page {page.get('id', 'unknown')} to recent pages"
+                # Filter pages by last edit time
+                recent_pages = []
+                for page in results:
+                    try:
+                        last_edited_time = datetime.fromisoformat(
+                            page.get("last_edited_time", "").replace("Z", "+00:00")
                         )
-                    else:
                         logger.info(
-                            f"NOTION QUERY: Skipped page {page.get('id', 'unknown')} (edited before cutoff)"
+                            "Checking page last edited time",
+                            page_id=page.get("id", "unknown"),
+                            last_edited_time=last_edited_time,
                         )
-                except (ValueError, TypeError) as e:
-                    logger.error(
-                        f"NOTION QUERY: Error parsing last_edited_time for page {page.get('id', 'unknown')}: {e}"
-                    )
-                    continue
 
-            logger.info(
-                f"NOTION QUERY: Found {len(recent_pages)} recently updated pages in Notion"
-            )
-
-            # Convert pages to NotionInvoice models
-            invoices = []
-            for page in recent_pages:
-                try:
-                    invoice = self._page_to_notion_invoice(page)
-                    if invoice and invoice.stripe_id:
-                        invoices.append(invoice)
-                        logger.info(
-                            f"NOTION QUERY: Added invoice {invoice.notion_id} with Stripe ID {invoice.stripe_id}"
-                        )
-                    else:
-                        if not invoice:
-                            logger.warning(
-                                f"NOTION QUERY: Failed to convert page {page.get('id', 'unknown')} to invoice"
+                        # Now both datetimes are timezone-aware, so comparison will work
+                        if last_edited_time > cutoff_time:
+                            recent_pages.append(page)
+                            logger.info(
+                                "Added page to recent pages",
+                                page_id=page.get("id", "unknown"),
                             )
                         else:
-                            logger.warning(
-                                f"NOTION QUERY: Invoice {invoice.notion_id} has no Stripe ID, skipping"
+                            logger.info(
+                                "Skipped page (edited before cutoff)",
+                                page_id=page.get("id", "unknown"),
                             )
-                except Exception as e:
-                    logger.error(f"NOTION QUERY: Error converting page to invoice: {e}")
+                    except (ValueError, TypeError) as e:
+                        logger.error(
+                            "Error parsing last_edited_time",
+                            page_id=page.get("id", "unknown"),
+                            error=str(e),
+                        )
+                        continue
 
-            logger.info(
-                f"NOTION QUERY: Converted {len(invoices)} valid invoices with Stripe IDs"
-            )
-            return invoices
-        except Exception as e:
-            logger.error(
-                f"NOTION QUERY: Error getting recently updated invoices: {e}",
-                exc_info=True,
-            )
-            return []
+                logger.info(
+                    "Found recently updated pages in Notion", count=len(recent_pages)
+                )
+
+                # Convert pages to NotionInvoice models
+                invoices = []
+                for page in recent_pages:
+                    try:
+                        invoice = self._page_to_notion_invoice(page)
+                        if invoice and invoice.stripe_id:
+                            invoices.append(invoice)
+                            logger.info(
+                                "Added invoice to results",
+                                notion_id=invoice.notion_id,
+                                stripe_id=invoice.stripe_id,
+                            )
+                        else:
+                            if not invoice:
+                                logger.warning(
+                                    "Failed to convert page to invoice",
+                                    page_id=page.get("id", "unknown"),
+                                )
+                            else:
+                                logger.warning(
+                                    "Invoice has no Stripe ID, skipping",
+                                    notion_id=invoice.notion_id,
+                                )
+                    except Exception as e:
+                        logger.error("Error converting page to invoice", error=str(e))
+
+                logger.info(
+                    "Converted valid invoices with Stripe IDs", count=len(invoices)
+                )
+                return invoices
+            except Exception as e:
+                logger.error(
+                    "Error getting recently updated invoices",
+                    error=str(e),
+                    exc_info=True,
+                )
+                return []

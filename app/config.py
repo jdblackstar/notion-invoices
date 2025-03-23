@@ -26,6 +26,15 @@ class Config:
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
     SYNC_INTERVAL_SECONDS: int = int(os.getenv("SYNC_INTERVAL_SECONDS", "30"))
 
+    # Host and port
+    HOST: str = os.getenv("HOST", "0.0.0.0")
+    PORT: int = int(os.getenv("PORT", "8000"))
+
+    # Logfire configuration
+    ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")
+    LOGFIRE_API_KEY: str = os.getenv("LOGFIRE_API_KEY", "")
+    LOGFIRE_SERVICE_NAME: str = os.getenv("LOGFIRE_SERVICE_NAME", "notion-stripe-sync")
+
     @classmethod
     def validate(cls) -> Dict[str, str]:
         """
@@ -55,6 +64,12 @@ class Config:
         if not cls.NOTION_CLIENTS_DATABASE_ID:
             missing_vars["NOTION_CLIENTS_DATABASE_ID"] = (
                 "Notion Clients Database ID is required"
+            )
+
+        # Logfire API key is optional in development but required in production
+        if cls.ENVIRONMENT == "production" and not cls.LOGFIRE_API_KEY:
+            missing_vars["LOGFIRE_API_KEY"] = (
+                "Logfire API Key is required in production"
             )
 
         return missing_vars
