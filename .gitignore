@@ -24,3 +24,6 @@ logs/
 # Plist files (except templates)
 *.plist
 !*.plist.template
+
+# Cursor
+.cursor/
