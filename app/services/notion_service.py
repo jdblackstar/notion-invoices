@@ -563,7 +563,10 @@ class NotionService:
             }
 
         if invoice.due_date:
-            properties["Due Date"] = {"date": {"start": invoice.due_date.isoformat()}}
+            # Format date as YYYY-MM-DD for Notion date property
+            properties["Due Date"] = {
+                "date": {"start": invoice.due_date.date().isoformat()}
+            }
 
         # Handle billing period as a date range if both start and end are provided
         if invoice.billing_period_start:
