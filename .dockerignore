@@ -4,6 +4,7 @@
 # Docker
 Dockerfile
 .dockerignore
+docker-compose.yml
 
 # Python
 __pycache__/
@@ -37,4 +38,18 @@ dist/
 
 # Logs and temp files
 *.log
-*.tmp 
+*.tmp
+
+# macOS-specific deployment files (no longer needed)
+deploy.sh
+status.sh
+*.plist
+*.plist.template
+
+# Docker-specific directories
+logs/
+data/
+cloudflared/
+
+# System restart directory (not needed in container)
+system-restart/ 

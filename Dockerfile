@@ -8,10 +8,10 @@ ENV PYTHONUNBUFFERED=1
 # Set the working directory in the container
 WORKDIR /app
 
-# Install system dependencies if needed (e.g., for playwright)
-# RUN apt-get update && apt-get install -y --no-install-recommends some-package && rm -rf /var/lib/apt/lists/*
-# Add playwright install command if necessary
-# RUN python -m playwright install --with-deps
+# Install system dependencies (curl for health checks)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
 
 # Install uv
 RUN pip install --no-cache-dir uv
@@ -27,5 +27,11 @@ RUN uv pip sync --system pyproject.toml
 # Copy the rest of the application code
 COPY . .
 
+# Create logs directory
+RUN mkdir -p logs
+
+# Expose the port the app runs on
+EXPOSE 8080
+
 # Command to run the application
-CMD ["python", "src/notion_invoices/main.py"] 
+CMD ["python", "-m", "app.main"] 

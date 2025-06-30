@@ -10,6 +10,10 @@ A service that syncs invoices between Stripe and Notion.
 - Detailed logging of all activities
 - Structured logging with Logfire for better observability
 
+## Migrating from macOS plists?
+
+If you were previously using the macOS plist-based deployment, see [MIGRATION.md](MIGRATION.md) for a step-by-step guide to migrate to Docker.
+
 ## Setup
 
 ### Requirements
@@ -68,32 +72,69 @@ LOGFIRE_SERVICE_NAME=notion-stripe-sync # or custom name
 
 When `ENVIRONMENT` is set to `production`, a valid Logfire API key is required. In development mode, logs will be sent to stdout even without an API key.
 
-### Deploy as a Service
+### Deploy with Docker
 
-For macOS, this project uses launchd to run as a background service:
+This project now uses Docker for deployment and service management:
 
-1. Run the deployment script:
+#### Prerequisites
+
+- Docker and Docker Compose installed
+- For system restart: Linux with systemd (for auto-restart on boot)
+
+#### Deployment
+
+1. **Build and deploy the service:**
 
 ```bash
-./deploy.sh
+./docker-deploy.sh
 ```
 
 This will:
-- Create plist files from the templates
-- Install them to the correct location
-- Start the service
-- Set up Cloudflare tunnel (optional)
+- Build the Docker image
+- Start the service in Docker containers
+- Set up health checks and logging
+- Optionally configure Cloudflare tunnel
 
-The plist templates are in the repository, but the generated plist files are git-ignored.
+2. **Deploy without Cloudflare tunnel:**
 
-### Managing the Service
+```bash
+./docker-deploy.sh --no-tunnel
+```
+
+3. **Set up Cloudflare tunnel (optional):**
+
+```bash
+./docker-deploy.sh --setup-tunnel
+```
+
+Follow the instructions to configure your tunnel, then run the deploy script again.
+
+#### Managing the Service
 
 Check status and restart when needed:
 
 ```bash
-./status.sh                # Check service status and recent activity
-./status.sh --restart      # Restart services and show status
+./docker-status.sh                # Check service status and recent activity
+./docker-status.sh --restart      # Restart services and show status
 ```
+
+Other useful commands:
+```bash
+docker-compose logs -f notion-invoices  # View live logs
+docker-compose down                     # Stop services
+docker-compose up -d                    # Start services
+```
+
+#### System Restart (Auto-start on boot)
+
+To enable auto-restart on system boot:
+
+```bash
+cd system-restart
+./setup-system-restart.sh
+```
+
+This creates a systemd service that will automatically start your Docker containers when the system boots.
 
 ### Notion Database Setup
 
