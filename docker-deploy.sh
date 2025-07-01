@@ -100,15 +100,19 @@ if [ "$SETUP_TUNNEL" = true ]; then
     echo "2. Create a tunnel:"
     echo "   docker run --rm -v \$(pwd)/cloudflared:/etc/cloudflared cloudflare/cloudflared:latest tunnel create notion-invoices"
     echo ""
-    echo "3. Create a config file at ./cloudflared/config.yml with content like:"
-    echo "   tunnel: YOUR_TUNNEL_ID"
-    echo "   credentials-file: /etc/cloudflared/YOUR_TUNNEL_ID.json"
-    echo "   ingress:"
-    echo "     - hostname: notion-invoices.yourdomain.com"
-    echo "       service: http://notion-invoices:8080"
-    echo "     - service: http_status:404"
+            echo "3. Create a config file at ./cloudflared/config.yml with content like:"
+        echo "   tunnel: YOUR_TUNNEL_ID"
+        echo "   credentials-file: /etc/cloudflared/YOUR_TUNNEL_ID.json"
+        echo "   ingress:"
+        echo "     - hostname: webhooks.yourdomain.com"
+        echo "       service: http://notion-invoices:8080"
+        echo "       path: /api/webhooks/*  # Only expose webhooks publicly"
+        echo "     - service: http_status:404"
+        echo ""
+        echo "   This configuration only exposes webhook endpoints publicly."
+        echo "   Use Tailscale for private access to the full application."
     echo ""
-    echo "4. Create a DNS record pointing notion-invoices.yourdomain.com to YOUR_TUNNEL_ID.cfargotunnel.com"
+            echo "4. Create a DNS record pointing webhooks.yourdomain.com to YOUR_TUNNEL_ID.cfargotunnel.com"
     echo ""
     echo "5. Run this script again without --setup-tunnel to deploy with tunnel support"
     exit 0
@@ -119,10 +123,12 @@ echo -e "${BLUE}Deploying application...${NC}"
 
 if [ "$NO_TUNNEL" = true ] || [ ! -f cloudflared/config.yml ]; then
     echo -e "${BLUE}Deploying without Cloudflare tunnel...${NC}"
+    echo -e "${YELLOW}Note: For Stripe webhooks, you'll need a public endpoint.${NC}"
+    echo -e "${YELLOW}Consider using Tailscale Funnel or another solution for webhook access.${NC}"
     docker-compose up -d notion-invoices
 else
-    echo -e "${BLUE}Deploying with Cloudflare tunnel...${NC}"
-    docker-compose --profile tunnel up -d
+    echo -e "${BLUE}Deploying with Cloudflare tunnel for webhooks...${NC}"
+    docker-compose --profile webhooks up -d
 fi
 
 if [ $? -eq 0 ]; then

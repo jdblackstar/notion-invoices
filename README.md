@@ -136,6 +136,10 @@ cd system-restart
 
 This creates a systemd service that will automatically start your Docker containers when the system boots.
 
+#### Tailscale Deployment
+
+If you prefer using Tailscale for private networking instead of Cloudflare tunnel, see [TAILSCALE_DEPLOYMENT.md](TAILSCALE_DEPLOYMENT.md) for detailed instructions. This approach provides secure private access while still handling Stripe webhook requirements.
+
 ### Notion Database Setup
 
 Your Notion Invoice database should have these properties:

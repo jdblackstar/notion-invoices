@@ -29,7 +29,7 @@ services:
 
   cloudflared:
     image: cloudflare/cloudflared:latest
-    container_name: cloudflared-tunnel
+    container_name: cloudflared-webhooks
     restart: unless-stopped
     depends_on:
       - notion-invoices
@@ -37,7 +37,7 @@ services:
       - ./cloudflared:/etc/cloudflared
     command: tunnel --config /etc/cloudflared/config.yml run
     profiles:
-      - tunnel  # Optional profile for Cloudflare tunnel
+      - webhooks  # Optional profile for webhook-only public access
     logging:
       driver: "json-file"
       options:
